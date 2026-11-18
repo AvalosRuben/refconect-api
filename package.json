@@ -1,0 +1,32 @@
+{
+  "name": "refconect-api",
+  "version": "1.0.0",
+  "description": "API de consulta de piezas y equivalencias para RefConect (prototipo local).",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "test": "node --test tests/*.test.js",
+    "db:reset": "docker compose down -v && docker compose up -d --wait",
+    "semilla:hash": "node scripts/hash.js"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "morgan": "^1.12.1",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "supertest": "^7.3.2"
+  }
+}
