@@ -1,0 +1,285 @@
+openapi: 3.0.3
+info:
+  title: RefConect API
+  version: 1.0.0
+  description: |
+    API de solo consulta del catálogo de piezas automotrices: existencias y equivalencias
+    entre marcas. Prototipo local con datos de prueba; no se conecta al punto de venta.
+    Todas las respuestas son JSON UTF-8. Salvo `health` y `login`, todas exigen
+    `Authorization: Bearer <token>`.
+servers:
+  - url: http://localhost:3000/v1
+    description: Laptop / simulador iOS
+  - url: http://10.0.2.2:3000/v1
+    description: Emulador Android
+security:
+  - bearerAuth: []
+tags:
+  - name: Sistema
+  - name: Autenticación
+  - name: Catálogo
+paths:
+  /health:
+    get:
+      tags: [Sistema]
+      summary: Estado de la API y de la base de datos (SELECT 1)
+      security: []
+      responses:
+        '200':
+          description: API y base disponibles
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+              example: { estado: ok, base_de_datos: ok, version: 1.0.0 }
+        '503':
+          description: La base de datos no responde
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthError' }
+              example: { estado: error, base_de_datos: error }
+  /auth/login:
+    post:
+      tags: [Autenticación]
+      summary: Inicia sesión y devuelve un JWT
+      description: Límite de 10 intentos por minuto por IP (contador en memoria).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [usuario, password]
+              properties:
+                usuario: { type: string, example: empleado1 }
+                password: { type: string, example: Refconect2026! }
+      responses:
+        '200':
+          description: Sesión iniciada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Login' }
+        '400': { $ref: '#/components/responses/PeticionInvalida' }
+        '401':
+          description: Usuario inexistente, contraseña incorrecta o usuario inactivo (mismo mensaje)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: { codigo: CREDENCIALES_INVALIDAS, mensaje: Usuario o contraseña incorrectos. } }
+        '429':
+          description: Demasiados intentos desde la misma IP
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: { codigo: DEMASIADOS_INTENTOS, mensaje: Demasiados intentos de inicio de sesión. Espera un minuto. } }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+  /auth/me:
+    get:
+      tags: [Autenticación]
+      summary: Usuario del token (consultado en la base)
+      responses:
+        '200':
+          description: Usuario vigente
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [usuario]
+                properties:
+                  usuario: { $ref: '#/components/schemas/Usuario' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+  /categorias:
+    get:
+      tags: [Catálogo]
+      summary: Categorías ordenadas por nombre
+      responses:
+        '200':
+          description: Lista de categorías
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [datos]
+                properties:
+                  datos:
+                    type: array
+                    items: { $ref: '#/components/schemas/Categoria' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+  /productos:
+    get:
+      tags: [Catálogo]
+      summary: Busca piezas por número de parte, marca o descripción
+      description: |
+        - Sin `q`: catálogo paginado ordenado por marca y número de parte.
+        - Con `q`: el número de parte se compara normalizado (mayúsculas, solo letras y dígitos),
+          así `W71275`, `w 712/75` y `W-712 75` encuentran lo mismo. Además, cada palabra de `q`
+          debe coincidir en número de parte, marca o descripción (sin distinguir mayúsculas ni acentos).
+        - Orden: coincidencia exacta de número de parte, luego prefijo, luego el resto;
+          a igual relevancia, mayor existencia primero.
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 100 }, example: w 712/75 }
+        - { name: categoria_id, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: pagina, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: limite, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: Página de resultados
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaginaProductos' }
+        '400': { $ref: '#/components/responses/PeticionInvalida' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+  /productos/{id}:
+    get:
+      tags: [Catálogo]
+      summary: Detalle de una pieza con sus equivalentes
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: Pieza encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductoDetalle' }
+        '400': { $ref: '#/components/responses/PeticionInvalida' }
+        '401': { $ref: '#/components/responses/NoAutorizado' }
+        '404':
+          description: No existe la pieza
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: { codigo: NO_ENCONTRADO, mensaje: El producto no existe. } }
+        '500': { $ref: '#/components/responses/ErrorInterno' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    PeticionInvalida:
+      description: Parámetros o cuerpo inválidos
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { codigo: PETICION_INVALIDA, mensaje: El parámetro "limite" admite máximo 50. } }
+    NoAutorizado:
+      description: Falta el token, es inválido o venció
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { codigo: NO_AUTORIZADO, mensaje: Token inválido o vencido. } }
+    ErrorInterno:
+      description: Error interno (sin trazas ni detalles de SQL)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { codigo: ERROR_INTERNO, mensaje: Ocurrió un error interno. } }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [codigo, mensaje]
+          properties:
+            codigo:
+              type: string
+              enum: [PETICION_INVALIDA, CREDENCIALES_INVALIDAS, NO_AUTORIZADO, NO_ENCONTRADO, DEMASIADOS_INTENTOS, ERROR_INTERNO]
+            mensaje: { type: string }
+    Health:
+      type: object
+      required: [estado, base_de_datos, version]
+      properties:
+        estado: { type: string, enum: [ok] }
+        base_de_datos: { type: string, enum: [ok] }
+        version: { type: string }
+    HealthError:
+      type: object
+      required: [estado, base_de_datos]
+      properties:
+        estado: { type: string, enum: [error] }
+        base_de_datos: { type: string, enum: [error] }
+    Usuario:
+      type: object
+      required: [id, nombre, usuario, rol]
+      properties:
+        id: { type: integer, example: 1 }
+        nombre: { type: string, example: Juan Pérez }
+        usuario: { type: string, example: empleado1 }
+        rol: { type: string, example: empleado }
+    Login:
+      type: object
+      required: [token, tipo, expira_en, usuario]
+      properties:
+        token: { type: string, description: 'JWT HS256 con sub (id del usuario), rol y exp' }
+        tipo: { type: string, enum: [Bearer] }
+        expira_en: { type: integer, description: Segundos de vigencia, example: 28800 }
+        usuario: { $ref: '#/components/schemas/Usuario' }
+    Categoria:
+      type: object
+      required: [id, nombre]
+      properties:
+        id: { type: integer, example: 1 }
+        nombre: { type: string, example: Filtros }
+    ProductoResumen:
+      type: object
+      required: [id, numero_parte, marca, categoria, descripcion, existencia, ubicacion, tiene_equivalentes]
+      properties:
+        id: { type: integer, example: 9 }
+        numero_parte: { type: string, example: W 712/75 }
+        marca: { type: string, example: Mann-Filter }
+        categoria: { type: string, example: Filtros }
+        descripcion: { type: string, example: Filtro de aceite }
+        existencia: { type: integer, minimum: 0, example: 0 }
+        ubicacion: { type: string, nullable: true, example: P1-A3 }
+        tiene_equivalentes: { type: boolean, example: true }
+    PaginaProductos:
+      type: object
+      required: [datos, pagina, limite, total]
+      properties:
+        datos:
+          type: array
+          items: { $ref: '#/components/schemas/ProductoResumen' }
+        pagina: { type: integer, example: 1 }
+        limite: { type: integer, example: 20 }
+        total: { type: integer, example: 1 }
+    Equivalente:
+      type: object
+      required: [id, numero_parte, marca, descripcion, existencia, ubicacion]
+      properties:
+        id: { type: integer, example: 14 }
+        numero_parte: { type: string, example: F 026 407 157 }
+        marca: { type: string, example: Bosch }
+        descripcion: { type: string, example: Filtro de aceite }
+        existencia: { type: integer, minimum: 0, example: 12 }
+        ubicacion: { type: string, nullable: true, example: P1-A4 }
+    ProductoDetalle:
+      type: object
+      required: [id, numero_parte, numero_parte_norm, marca, categoria, descripcion, existencia, ubicacion, grupo, equivalentes]
+      properties:
+        id: { type: integer, example: 9 }
+        numero_parte: { type: string, example: W 712/75 }
+        numero_parte_norm: { type: string, example: W71275 }
+        marca: { type: string, example: Mann-Filter }
+        categoria: { type: string, example: Filtros }
+        descripcion: { type: string, example: Filtro de aceite }
+        existencia: { type: integer, minimum: 0, example: 0 }
+        ubicacion: { type: string, nullable: true, example: P1-A3 }
+        grupo:
+          nullable: true
+          description: null si la pieza no tiene grupo de equivalencia
+          type: object
+          required: [id, descripcion, existencia_total]
+          properties:
+            id: { type: integer, example: 1 }
+            descripcion: { type: string, example: Filtro de aceite 1.6L }
+            existencia_total: { type: integer, description: Suma de todo el grupo, incluida esta pieza, example: 17 }
+        equivalentes:
+          type: array
+          description: Demás piezas del grupo, por existencia descendente y luego marca
+          items: { $ref: '#/components/schemas/Equivalente' }
